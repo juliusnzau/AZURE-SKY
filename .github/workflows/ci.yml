@@ -1,0 +1,27 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install backend deps
+        run: npm install --prefix backend
+      - name: Syntax check backend + frontend
+        run: |
+          find backend/src -name '*.js' -print0 | xargs -0 -n1 node --check
+          node --check frontend/js/app.js
+  schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: pw }
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply schema to a real PostgreSQL
+        run: PGPASSWORD=pw psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f db/schema.sql

@@ -1,0 +1,53 @@
+# Azure Sky — local & single-host production stack.
+#   cp .env.example .env && docker compose up --build
+# Scale the API:  docker compose up -d --scale api=3
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: azure, POSTGRES_PASSWORD: azure, POSTGRES_DB: azuresky }
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U azure -d azuresky"], interval: 5s, retries: 20 }
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes: [redisdata:/data]
+    restart: unless-stopped
+
+  api:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://azure:azure@postgres:5432/azuresky
+      REDIS_URL: redis://redis:6379
+      UPLOAD_DIR: /data/uploads
+    volumes: [uploads:/data/uploads]
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
+    restart: unless-stopped
+
+  worker:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    command: ["node", "src/workers/worker.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://azure:azure@postgres:5432/azuresky
+      REDIS_URL: redis://redis:6379
+      UPLOAD_DIR: /data/uploads
+    volumes: [uploads:/data/uploads]
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+      - uploads:/data/uploads:ro
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes: { pgdata: {}, redisdata: {}, uploads: {} }
